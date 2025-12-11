@@ -33,11 +33,11 @@ io.on('connection', (socket) => {
   });
 });
 
-// --- Replace existing polling loop with this block ---
+// --- Unified polling loop (replace any other polling loop) ---
 const axios = require('axios');
-const User = require('./models/user');
+const User = require('./models/user'); // ensure this path matches your project
 
-const POLL_INTERVAL_MS = 15000; // 15s
+const POLL_INTERVAL_MS = 15000; // 15 seconds
 let pollTimer = null;
 
 async function fetchAndEmitPrices() {
@@ -45,21 +45,28 @@ async function fetchAndEmitPrices() {
     const users = await User.find({}).exec();
     const allSymbols = new Set();
     for (const u of users) {
-      (u.watchlist || []).forEach(s => allSymbols.add(s));
+      if (u && Array.isArray(u.watchlist)) {
+        u.watchlist.forEach(s => allSymbols.add(s));
+      }
     }
-    const symbols = Array.from(allSymbols).slice(0, 5); // limit to 5 to avoid rate limits
-    const key = process.env.ALPHA_VANTAGE_API_KEY;
-    if (!key) return;
-    for (const s of symbols) {
+
+    const symbols = Array.from(allSymbols).slice(0, 5); // limit to avoid API throttling
+    const apiKey = process.env.ALPHA_VANTAGE_API_KEY;
+    if (!apiKey) {
+      console.warn('ALPHA_VANTAGE_API_KEY not set — skipping price fetch');
+      return;
+    }
+
+    for (const symbol of symbols) {
       try {
-        const url = `https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${encodeURIComponent(s)}&apikey=${key}`;
-        const res = await axios.get(url);
+        const url = `https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${encodeURIComponent(symbol)}&apikey=${apiKey}`;
+        const res = await axios.get(url, { timeout: 10000 });
         const quote = res.data['Global Quote'] || {};
         const price = quote['05. price'] || null;
-        const payload = { symbol: s, price, raw: quote, timestamp: Date.now() };
-        io.to(s).emit('price_update', payload);
-      } catch (innerErr) {
-        console.error('Error fetching price for', s, innerErr.message || innerErr);
+        const payload = { symbol, price, raw: quote, timestamp: Date.now() };
+        io.to(symbol).emit('price_update', payload);
+      } catch (err) {
+        console.error('Error fetching price for', symbol, err.message || err);
       }
     }
   } catch (err) {
@@ -67,9 +74,11 @@ async function fetchAndEmitPrices() {
   }
 }
 
-// Start polling after server start
+// Start the poll only once
 if (!pollTimer) {
   pollTimer = setInterval(fetchAndEmitPrices, POLL_INTERVAL_MS);
+  // Optionally run immediately once at startup:
+  fetchAndEmitPrices().catch(err => console.error('Initial fetch failed', err));
 }
 
 
