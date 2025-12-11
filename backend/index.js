@@ -33,33 +33,45 @@ io.on('connection', (socket) => {
   });
 });
 
-// Simple polling loop to fetch latest price for subscribed symbols every 15 seconds
+// --- Replace existing polling loop with this block ---
 const axios = require('axios');
 const User = require('./models/user');
-const fetchInterval = 15000;
 
-setInterval(async () => {
+const POLL_INTERVAL_MS = 15000; // 15s
+let pollTimer = null;
+
+async function fetchAndEmitPrices() {
   try {
     const users = await User.find({}).exec();
     const allSymbols = new Set();
     for (const u of users) {
-      (u.watchlist||[]).forEach(s=>allSymbols.add(s));
+      (u.watchlist || []).forEach(s => allSymbols.add(s));
     }
-    const symbols = Array.from(allSymbols).slice(0,5); // limit to 5 to avoid API throttling in free tier
+    const symbols = Array.from(allSymbols).slice(0, 5); // limit to 5 to avoid rate limits
+    const key = process.env.ALPHA_VANTAGE_API_KEY;
+    if (!key) return;
     for (const s of symbols) {
-      const key = process.env.ALPHA_VANTAGE_API_KEY;
-      if (!key) continue;
-      const url = `https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${encodeURIComponent(s)}&apikey=${key}`;
-      const res = await axios.get(url);
-      const quote = res.data['Global Quote'] || {};
-      const price = quote['05. price'] || null;
-      const payload = { symbol: s, price, raw: quote, timestamp: Date.now() };
-      io.to(s).emit('price_update', payload);
+      try {
+        const url = `https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${encodeURIComponent(s)}&apikey=${key}`;
+        const res = await axios.get(url);
+        const quote = res.data['Global Quote'] || {};
+        const price = quote['05. price'] || null;
+        const payload = { symbol: s, price, raw: quote, timestamp: Date.now() };
+        io.to(s).emit('price_update', payload);
+      } catch (innerErr) {
+        console.error('Error fetching price for', s, innerErr.message || innerErr);
+      }
     }
-  } catch (e) {
-    console.error('Polling error', e.message);
+  } catch (err) {
+    console.error('Polling error', err.message || err);
   }
-}, fetchInterval);
+}
+
+// Start polling after server start
+if (!pollTimer) {
+  pollTimer = setInterval(fetchAndEmitPrices, POLL_INTERVAL_MS);
+}
+
 
 
 const fetchInterval = 15000;
