@@ -33,9 +33,9 @@ io.on('connection', (socket) => {
   });
 });
 
-// --- Unified polling loop (replace any other polling loop) ---
+// ---- Unified polling block: keep only this polling logic ----
 const axios = require('axios');
-const User = require('./models/user'); // ensure this path matches your project
+const User = require('./models/user'); // ensure path is correct
 
 const POLL_INTERVAL_MS = 15000; // 15 seconds
 let pollTimer = null;
@@ -46,11 +46,11 @@ async function fetchAndEmitPrices() {
     const allSymbols = new Set();
     for (const u of users) {
       if (u && Array.isArray(u.watchlist)) {
-        u.watchlist.forEach(s => allSymbols.add(s));
+        u.watchlist.forEach(s => allSymbols.add(s.toUpperCase()));
       }
     }
 
-    const symbols = Array.from(allSymbols).slice(0, 5); // limit to avoid API throttling
+    const symbols = Array.from(allSymbols).slice(0, 5); // cap to limit API usage
     const apiKey = process.env.ALPHA_VANTAGE_API_KEY;
     if (!apiKey) {
       console.warn('ALPHA_VANTAGE_API_KEY not set — skipping price fetch');
@@ -65,8 +65,8 @@ async function fetchAndEmitPrices() {
         const price = quote['05. price'] || null;
         const payload = { symbol, price, raw: quote, timestamp: Date.now() };
         io.to(symbol).emit('price_update', payload);
-      } catch (err) {
-        console.error('Error fetching price for', symbol, err.message || err);
+      } catch (innerErr) {
+        console.error('Price fetch error for', symbol, innerErr.message || innerErr);
       }
     }
   } catch (err) {
@@ -74,16 +74,16 @@ async function fetchAndEmitPrices() {
   }
 }
 
-// Start the poll only once
+// start only once
 if (!pollTimer) {
   pollTimer = setInterval(fetchAndEmitPrices, POLL_INTERVAL_MS);
-  // Optionally run immediately once at startup:
+  // optional immediate run once
   fetchAndEmitPrices().catch(err => console.error('Initial fetch failed', err));
 }
 
 
 
-const fetchInterval = 15000;
+
 let subscriptions = new Set();
 
 // Track subscriptions by reading from DB watchlists periodically (keeps example simple)
